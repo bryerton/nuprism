@@ -12,6 +12,7 @@ VOLT_MAX = pow(2,15)
 VOLT_MIN = -pow(2,15)
 NUM_ADC = 5
 NUM_CH_PER_ADC = 4
+HEADER_LEN = 42
 
 logger = logging.getLogger(__name__)
 flag = GracefulExiter()
@@ -33,6 +34,13 @@ def main():
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase logging verbosity, can be repeated")
 
     args = parser.parse_args()
+
+    if args.adc != "all":
+        args.adc = int(args.adc)
+        if args.adc < 0: 
+            args.adc = 0 
+        elif args.adc > 4:
+            args.adc = 4
 
     # Setup logging
     logger.setLevel(logging.DEBUG)
@@ -60,7 +68,6 @@ def main():
     lines = []
     max_samples = int(args.samples)
 
-
     def get_data(max_samples):
         global graph_data
 
@@ -73,9 +80,7 @@ def main():
         udp_socket.setblocking(False)
         udp_socket.bind(('0.0.0.0', args.port))
 
-
         while(not flag.exit()):
-
             current_time = time()
             if current_time > last_time + 2.0:
                 print(f"\r                                                                                                                               \r", end='')
@@ -100,32 +105,21 @@ def main():
 
                         rx_samples_per_adc[adc_id] += 1024
 
-                        for n in range(0, 1024, 64):
-                            adc0, adc1, adc2, adc3 = unpack_from("<hhhh", message, 42 + n)                        
-
-                            graph_data[adc_id]["0"].append(adc0)
-                            graph_data[adc_id]["1"].append(adc1)
-                            graph_data[adc_id]["2"].append(adc2)
-                            graph_data[adc_id]["3"].append(adc3)
-
-                            # graph_data[(adc_id*4)+0].append(adc0)
-                            # graph_data[(adc_id*4)+1].append(adc1)
-                            # graph_data[(adc_id*4)+2].append(adc2)
-                            # graph_data[(adc_id*4)+3].append(adc3)
+                        for n in range(0, 1024, 8):
+                            (ch0, ch1, ch2, ch3) = unpack_from("<hhhh", message, HEADER_LEN + n)                        
+                            graph_data[adc_id]["0"].append(ch0)
+                            graph_data[adc_id]["1"].append(ch1)
+                            graph_data[adc_id]["2"].append(ch2)
+                            graph_data[adc_id]["3"].append(ch3)
 
                         # Shorten arrays to maximum allowed length
                         graph_data[adc_id]["0"] = graph_data[adc_id]["0"][-max_samples:]
                         graph_data[adc_id]["1"] = graph_data[adc_id]["1"][-max_samples:]
                         graph_data[adc_id]["2"] = graph_data[adc_id]["2"][-max_samples:]
-                        graph_data[adc_id]["3"] = graph_data[adc_id]["3"][-max_samples:]                            
-
-                        # graph_data[(adc_id*4)+0] = graph_data[(adc_id*4)+0][-max_samples:]
-                        # graph_data[(adc_id*4)+1] = graph_data[(adc_id*4)+1][-max_samples:]
-                        # graph_data[(adc_id*4)+2] = graph_data[(adc_id*4)+2][-max_samples:]
-                        # graph_data[(adc_id*4)+3] = graph_data[(adc_id*4)+3][-max_samples:]                            
+                        graph_data[adc_id]["3"] = graph_data[adc_id]["3"][-max_samples:]                                                   
 
                     if len(message) == 58:
-                        trigger_count0, trigger_count1, global_ts0, global_ts1, global_ts2, global_ts3, trigger_info0, trigger_info1 = unpack_from(">HHHHHHHH", message, 42)
+                        trigger_count0, trigger_count1, global_ts0, global_ts1, global_ts2, global_ts3, trigger_info0, trigger_info1 = unpack_from(">HHHHHHHH", message, HEADER_LEN)
 
                         trigger_count = trigger_count1 << 16 | trigger_count0
                         global_ts = (global_ts3 << 48) | (global_ts2 << 32) | (global_ts1 << 16) | global_ts0
@@ -152,7 +146,8 @@ def main():
                 lines[(i * NUM_CH_PER_ADC) + 2].set_ydata(graph_data[i]["2"])
                 lines[(i * NUM_CH_PER_ADC) + 3].set_ydata(graph_data[i]["3"])
         else:
-            adc_id = int(args.adc) - 1
+            adc_id = args.adc
+
             lines[0].set_ydata(graph_data[adc_id]["0"])
             lines[1].set_ydata(graph_data[adc_id]["1"])
             lines[2].set_ydata(graph_data[adc_id]["2"])
@@ -167,7 +162,7 @@ def main():
                 a.set_xticks([0, max_samples / 2])
                 a.tick_params(labelrotation=315)
             else:
-                a.set_title(str(idx + 1))
+                a.set_title(str(args.adc))
             a.set_xlim([0, max_samples])
             a.set_ylim(VOLT_MAX, VOLT_MIN)
             a.grid(True)
@@ -189,22 +184,16 @@ def main():
         fig.canvas.manager.set_window_title("All ADCs - Voltage over Time")
         fig.text(0.5, 0.04, "Sample #", ha="center", va="center")
         fig.text(
-            0.06, 0.5, "Voltage (V)", ha="center", va="center", rotation="vertical"
+            0.06, 0.5, "ADC Unit", ha="center", va="center", rotation="vertical"
         )
     else:
-        if int(args.adc) < 1:
-            args.adc = 1
-
-        elif int(args.adc) > 5:
-            args.adc = 5
-
         gs = fig.add_gridspec(1, hspace=0)
         ax = [gs.subplots(sharex=True)]
         fig.canvas.manager.set_window_title(
-            "ADC #" + str(int(args.adc)) + " Voltage over Time"
+            "ADC #" + str(int(args.adc)) + " ADC units vs Samples"
         )
 
-        plt.ylabel("Voltage (V)")
+        plt.ylabel("ADC Units")
         plt.xlabel("Sample #")
 
     plt.ioff()
@@ -237,20 +226,12 @@ def main():
         fig.legend(fig.axes[0].lines, ["0", "1", "2", "3"], loc="upper center", ncol=4)
 
     else:
-        adc_id = int(args.adc) - 1
+        adc_id = int(args.adc)
 
-        (line0,) = ax[0].plot(
-            graph_data[adc_id]["ts"], graph_data[adc_id]["0"], label="0"
-        )
-        (line1,) = ax[0].plot(
-            graph_data[adc_id]["ts"], graph_data[adc_id]["1"], label="1"
-        )
-        (line2,) = ax[0].plot(
-            graph_data[adc_id]["ts"], graph_data[adc_id]["2"], label="2"
-        )
-        (line3,) = ax[0].plot(
-            graph_data[adc_id]["ts"], graph_data[adc_id]["3"], label="3"
-        )
+        (line0,) = ax[0].plot(graph_data[adc_id]["ts"], graph_data[adc_id]["0"], label="0")
+        (line1,) = ax[0].plot(graph_data[adc_id]["ts"], graph_data[adc_id]["1"], label="1")
+        (line2,) = ax[0].plot(graph_data[adc_id]["ts"], graph_data[adc_id]["2"], label="2")
+        (line3,) = ax[0].plot(graph_data[adc_id]["ts"], graph_data[adc_id]["3"], label="3")
 
         lines.append(line0)
         lines.append(line1)
@@ -260,6 +241,7 @@ def main():
 
         # Format plot
         plt.xlim([0, max_samples])
+        plt.title(f"ADC {adc_id}")
         plt.grid(True)
 
     t = Thread(target=get_data, args=(max_samples,))
@@ -286,6 +268,9 @@ def main():
 
     # Tell thread to end
     flag.change_state(0, 0)
+
+    print()
+
 
 
 if __name__ == "__main__":
